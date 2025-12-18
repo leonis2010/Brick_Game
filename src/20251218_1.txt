@@ -1,0 +1,1768 @@
+./brick_game/common/common.c
+
+#include "../tetris/model/s21_tetris_cli.h"
+#ifdef TEST_MODE
+#else
+void waiting_Enter() {
+  int ch;
+  while ((ch = getch()) != KEY_ENTER && ch != '\n') {
+  }
+}
+#endif
+
+./brick_game/common/high_score/high_score.h
+
+#ifndef HIGH_SCORE_H
+#define HIGH_SCORE_H
+#include <stdio.h>
+#include <stdlib.h>
+/**
+ * @brief Имя файла для сохранения рекорда.
+ */
+#define HIGH_SCORE_FILENAME "high_score.txt"
+
+int load_high_score(int game_type);
+void save_high_score(int score, int game_type);
+
+#endif  // HIGH_SCORE_H
+
+
+./brick_game/common/high_score/load_high_score.c
+
+#include "high_score.h"
+
+int load_high_score(int flag) {
+  char filename[256];
+  snprintf(filename, sizeof(filename), "%s/bin/%s", getenv("HOME"),
+           HIGH_SCORE_FILENAME);
+  FILE *file = fopen(filename, "r");
+  if (file == NULL) {
+    return 0;
+  }
+
+  int high_score = 0;
+  int current_line = 0;
+
+  // Читаем файл построчно
+  // feof Возвращает ненулевое значение (истина),
+  // если указатель на файл (file) достиг конца файла.
+  while (!feof(file)) {
+    int score;
+    if (fscanf(file, "%d", &score) == 1) {
+      current_line++;
+      if (current_line == flag) {
+        high_score = score;
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+
+  fclose(file);
+  return high_score;
+}
+
+./brick_game/common/high_score/save_high_score.c
+
+#include "high_score.h"
+void save_high_score(int high_score, int flag) {
+  char filename[256];
+  snprintf(filename, sizeof(filename), "%s/bin/%s", getenv("HOME"),
+           HIGH_SCORE_FILENAME);
+
+  FILE *file = fopen(filename, "r");
+  int scores[2] = {0, 0};
+  if (file != NULL) {
+    if (fscanf(file, "%d", &scores[0]) != 1) {
+      scores[0] = 0;  // Первая строка для тетриса
+    }
+    if (fscanf(file, "%d", &scores[1]) != 1) {
+      scores[1] = 0;  // Вторая строка для змейки
+    }
+    // fscanf(file, "%d", &scores[0]);
+    // fscanf(file, "%d", &scores[1]);
+    fclose(file);
+  }
+
+  if (flag == 1) {
+    scores[0] = high_score;
+  } else if (flag == 2) {
+    scores[1] = high_score;
+  }
+
+  file = fopen(filename, "w");
+  if (file == NULL) {
+    fprintf(stderr, "Failed to open file for writing: %s\n", filename);
+    return;
+  }
+  fprintf(file, "%d\n%d", scores[0], scores[1]);
+  fclose(file);
+}
+
+./brick_game/snake/cli_controller/s21_cli_snake.h
+
+#ifndef S21_SNAKE_H
+#define S21_SNAKE_H
+
+#include <algorithm>
+#include <deque>
+#include <string>
+#include <utility>
+
+namespace s21 {
+
+enum Direction { UP, DOWN, LEFT, RIGHT };
+
+class SnakeModel;
+class SnakeView;
+class SnakeController;
+
+}  // namespace s21
+
+#endif  // S21_SNAKE_H
+
+./brick_game/snake/cli_controller/snake_controller.cpp
+
+#include "snake_controller.h"
+
+#include <sys/time.h>
+#include <unistd.h>
+
+#include <iostream>
+
+#include "../../../gui/cli/snake/snake_view.h"
+#include "../model/snake_model.h"
+
+namespace s21 {
+SnakeController::SnakeController(SnakeModel& model, SnakeView& view)
+    : model_(model), view_(view), is_boost_key_down_(false) {}
+
+void SnakeController::HandleInput(int ch) {
+  if (ch == 27) {
+    model_.TogglePause();
+    return;
+  }
+  if (model_.IsPause()) return;
+
+  switch (ch) {
+    case KEY_UP:
+      if (model_.GetDirection() != DOWN) model_.SetDirection(UP);
+      break;
+    case KEY_DOWN:
+      if (model_.GetDirection() != UP) model_.SetDirection(DOWN);
+      break;
+    case KEY_LEFT:
+      if (model_.GetDirection() != RIGHT) model_.SetDirection(LEFT);
+      break;
+    case KEY_RIGHT:
+      if (model_.GetDirection() != LEFT) model_.SetDirection(RIGHT);
+      break;
+    case ' ':
+      is_boost_key_down_ = true;
+      model_.SetBoost(true);
+      break;
+    case 'q':
+    case 'Q':
+      model_.SetGameOver(true);
+      break;
+    default:
+      is_boost_key_down_ = false;
+      break;
+  }
+}
+
+void SnakeController::sleeping_game() {
+  int delay_ms = model_.GetDelay();
+
+  struct timeval start_time;
+  gettimeofday(&start_time, NULL);
+
+  // Опрос клавиатуры во время ожидания
+  while (true) {
+    int ch = getch();
+    if (ch != ERR) {
+      HandleInput(ch);
+    }
+
+    // Вычисляем прошедшее время
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    long elapsed_ms = (now.tv_sec - start_time.tv_sec) * 1000 +
+                      (now.tv_usec - start_time.tv_usec) / 1000;
+
+    if (elapsed_ms >= delay_ms) break;
+    // короткая пауза
+    usleep(1000);
+  }
+}
+void SnakeController::checkingBoost() {
+  // После завершения задержки проверяем: удерживается ли пробел
+  if (!is_boost_key_down_) {
+    model_.SetBoost(false);
+    is_boost_key_down_ = false;
+  }
+}
+
+void SnakeController::Update() {
+  sleeping_game();
+  checkingBoost();
+  model_.Move();
+  view_.Draw(model_);
+}
+
+bool SnakeController::IsGameOver() const { return model_.IsGameOver(); }
+
+}  // namespace s21
+
+
+./brick_game/snake/cli_controller/snake_controller.h
+
+#ifndef S21_SNAKE_CONTROLLER_H
+#define S21_SNAKE_CONTROLLER_H
+
+#include "s21_cli_snake.h"
+
+namespace s21 {
+
+class SnakeController {
+ public:
+  SnakeController(SnakeModel& model, SnakeView& view);
+  void HandleInput(int ch);
+  void Update();
+  bool IsGameOver() const;
+  void sleeping_game();
+  void checkingBoost();
+
+ private:
+  SnakeModel& model_;
+  SnakeView& view_;
+  bool is_boost_key_down_;
+};
+
+}  // namespace s21
+
+#endif  // S21_SNAKE_CONTROLLER_H
+
+
+./brick_game/snake/cli_controller/snake_main.cpp
+
+#include <unistd.h>
+
+#include "../../../gui/cli/snake/snake_view.h"
+#include "../model/snake_model.h"
+#include "snake_controller.h"
+#ifdef TEST_MODE
+#else
+extern "C" {
+#include "../../tetris/model/s21_tetris_cli.h"  // Для внешних функций
+void snake_main() {
+  noecho();
+  cbreak();
+  initialization_of_colors();
+  WINDOW *win_game, *win_next_figure, *win_score_level, *win_high_score;
+  if (cli_create_frames_for_game(&win_game, &win_next_figure, &win_score_level,
+                                 &win_high_score) != 0) {
+    endwin();
+    return;
+  }
+
+  s21::SnakeModel model;
+  s21::SnakeView view(win_game, win_next_figure, win_score_level,
+                      win_high_score);
+  s21::SnakeController controller(model, view);
+  nodelay(stdscr, FALSE);
+  keypad(stdscr, TRUE);
+  curs_set(0);
+  refresh();
+  display_welcome_screen(model.GetHighScore(), win_game, win_next_figure,
+                         win_score_level, win_high_score, 2);
+  int ch;
+  waiting_Enter();
+  nodelay(stdscr, TRUE);
+  while (!controller.IsGameOver()) {
+    ch = getch();
+    controller.HandleInput(ch);
+    if (model.IsPause()) {
+      view.DisplayPause();
+      continue;
+    }
+    controller.Update();
+  }
+
+  save_high_score(model.GetHighScore(), 2);
+  view.DisplayGameOver(model);
+  nodelay(stdscr, FALSE);
+  getch();
+
+  delwin(win_game);
+  delwin(win_next_figure);
+  delwin(win_score_level);
+  delwin(win_high_score);
+  endwin();
+}
+}
+#endif
+
+
+./brick_game/snake/model/snake_model.cpp
+
+#include "snake_model.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+extern "C" {
+#include "../../common/high_score/high_score.h"
+}
+
+namespace s21 {
+const std::string SnakeModel::HIGH_SCORE_FILE = "snake_high_score.txt";
+SnakeModel::SnakeModel()
+    : direction_(DOWN),
+      game_over_(false),
+      win_(false),
+      score_(0),
+      level_(1),
+      speed_delay_(SPEED_DELAY),
+      boost_(false),
+      start_screen_(true) {
+  high_score_ = load_high_score(2);  // Загружаем рекорд из Си
+  int center_x = WIDTH / 2;
+  int start_y = HEIGHT / 3;
+  for (int i = 3; i >= 0; --i) {
+    snake_.emplace_back(start_y + i, center_x);
+  }
+  GenerateFood();
+}
+
+void SnakeModel::Move() {
+  std::pair<int, int> head = snake_.front();
+  switch (direction_) {
+    case UP:
+      head.first--;
+      break;
+    case DOWN:
+      head.first++;
+      break;
+    case LEFT:
+      head.second--;
+      break;
+    case RIGHT:
+      head.second++;
+      break;
+  }
+  if (head.first < 0 || head.first >= HEIGHT || head.second < 0 ||
+      head.second >= WIDTH ||
+      std::find(snake_.begin(), snake_.end(), head) != snake_.end()) {
+    game_over_ = true;
+    win_ = false;
+    return;
+  }
+
+  snake_.push_front(head);
+
+  if (head == food_) {
+    score_ += SCORE;
+    if (score_ > high_score_) high_score_ = score_;
+    if (score_ >= 200) {
+      win_ = true;
+      game_over_ = true;
+    }
+    UpdateLevel();
+    GenerateFood();
+  } else {
+    snake_.pop_back();
+  }
+}
+
+bool SnakeModel::IsStartScreen() const { return start_screen_; }
+void SnakeModel::SetStartScreen(bool state) { start_screen_ = state; }
+bool SnakeModel::IsWin() const { return win_; }
+void SnakeModel::SetDirection(Direction dir) { direction_ = dir; }
+Direction SnakeModel::GetDirection() const { return direction_; }
+void SnakeModel::SetGameOver(bool game_over) { game_over_ = game_over; }
+bool SnakeModel::IsGameOver() const { return game_over_; }
+bool SnakeModel::IsPause() const { return pause_; }
+void SnakeModel::TogglePause() { pause_ = !pause_; }
+int SnakeModel::GetScore() const { return score_; }
+int SnakeModel::GetLevel() const { return level_; }
+int SnakeModel::GetHighScore() const { return high_score_; }
+
+const std::deque<std::pair<int, int>>& SnakeModel::GetSnake() const {
+  return snake_;
+}
+
+const std::pair<int, int>& SnakeModel::GetFood() const { return food_; }
+void SnakeModel::SetBoost(bool isActive) { boost_ = isActive; }
+
+int SnakeModel::GetDelay() const {
+  return boost_ ? speed_delay_ / 2.5 : speed_delay_;
+}
+
+void SnakeModel::UpdateLevel() {
+  level_ = std::min(10, score_ / 5 + 1);
+  speed_delay_ = SPEED_DELAY - (level_ - 1) * 15;
+}
+
+void SnakeModel::GenerateFood() {
+  int x, y;
+  do {
+    x = rand() % WIDTH;
+    y = rand() % HEIGHT;
+  } while (std::find(snake_.begin(), snake_.end(), std::make_pair(y, x)) !=
+           snake_.end());
+  food_ = std::make_pair(y, x);
+}
+
+void SnakeModel::Reset() {
+  snake_.clear();
+  // Устанавливаем начальную позицию
+  int center_x = WIDTH / 2;
+  int start_y = HEIGHT / 3;
+  for (int i = 3; i >= 0; --i) {
+    snake_.emplace_back(start_y + i, center_x);
+  }
+
+  direction_ = DOWN;
+  score_ = 0;
+  level_ = 1;
+  speed_delay_ = SPEED_DELAY;
+  boost_ = false;
+  game_over_ = false;
+
+  // Новое яблоко
+  GenerateFood();
+  UpdateLevel();
+}
+
+// Только для тестов следующие функции
+void SnakeModel::PlaceFoodInFront() {
+  auto head = snake_.front();
+  switch (direction_) {
+    case UP:
+      food_ = std::make_pair(head.first - 1, head.second);
+      break;
+    case DOWN:
+      food_ = std::make_pair(head.first + 1, head.second);
+      break;
+    case LEFT:
+      food_ = std::make_pair(head.first, head.second - 1);
+      break;
+    case RIGHT:
+      food_ = std::make_pair(head.first, head.second + 1);
+      break;
+  }
+}
+void SnakeModel::FeedSnake(int bites) {
+  for (int i = 0; i < bites; ++i) {
+    PlaceFoodInFront();
+    Move();
+  }
+}
+
+bool SnakeModel::GetBoost() const { return boost_; }
+
+}  // namespace s21
+
+
+./brick_game/snake/model/snake_model.h
+
+#ifndef S21_SNAKE_MODEL_H
+#define S21_SNAKE_MODEL_H
+#include "../cli_controller/s21_cli_snake.h"
+
+namespace s21 {
+
+inline constexpr int WIDTH = 10;
+inline constexpr int HEIGHT = 20;
+inline constexpr int SPEED_DELAY = 400;
+inline constexpr int SCORE = 1;
+
+class SnakeModel {
+ public:
+  SnakeModel();
+  void Move();
+  void SetDirection(Direction dir);
+  Direction GetDirection() const;
+  void SetGameOver(bool game_over);
+  bool IsGameOver() const;
+  bool IsPause() const;
+  void TogglePause();
+  int GetScore() const;
+  int GetLevel() const;
+  int GetHighScore() const;
+  const std::deque<std::pair<int, int>>& GetSnake() const;
+  const std::pair<int, int>& GetFood() const;
+  void SetBoost(bool boost);
+  int GetDelay() const;
+  void Reset();
+  bool IsWin() const;
+  bool IsStartScreen() const;
+  void SetStartScreen(bool state);
+  void PlaceFoodInFront();
+  void FeedSnake(int bites);
+  bool GetBoost() const;
+
+ private:
+  std::deque<std::pair<int, int>> snake_;
+  std::pair<int, int> food_;
+  Direction direction_;
+  bool game_over_;
+  bool win_;
+  int score_;
+  int high_score_;
+  int level_;
+  int speed_delay_;
+  bool boost_;
+  bool pause_ = false;
+  static const std::string HIGH_SCORE_FILE;
+  bool start_screen_;
+
+  void UpdateLevel();
+  void GenerateFood();
+};
+
+}  // namespace s21
+
+#endif  // S21_SNAKE_MODEL_H
+
+
+./brick_game/snake/qt_controller/qt_snake_controller.cpp
+
+#include "qt_snake_controller.h"
+
+#include "qtimer.h"
+
+namespace s21 {
+
+QtSnakeController::QtSnakeController(SnakeModel& model, QtSnakeView& view)
+    : QObject(nullptr), model_(model), view_(view) {
+  // Основные соединения
+  connect(&timer_, &QTimer::timeout, this, &QtSnakeController::onTimeout);
+  connect(&view_, &QtSnakeView::keyPressed, this,
+          &QtSnakeController::handleKeyPress);
+  connect(&view_, &QtSnakeView::keyReleased, this,
+          &QtSnakeController::handleKeyRelease);
+
+  model_.SetStartScreen(true);
+  timer_.stop();
+
+  if (!model_.IsStartScreen()) {
+    timer_.start(model_.GetDelay());
+  }
+}
+
+SnakeDrawData QtSnakeController::get_data_from_model(SnakeModel& model) {
+  SnakeDrawData data;
+  data.snake = model.GetSnake();
+  data.food = model.GetFood();
+  data.score = model.GetScore();
+  data.paused = model.IsPause();
+  data.game_over = model_.IsGameOver();
+  data.win = model_.IsWin();
+  data.high_score = model_.GetHighScore();
+  data.level = model_.GetLevel();
+  data.start_screen = model_.IsStartScreen();
+  return data;
+}
+
+void QtSnakeController::onTimeout() {  // сердце игры
+  model_.Move();
+  refresh_timer();
+  view_.draw(get_data_from_model(model_));
+  if (model_.IsGameOver()) {
+    timer_.stop();
+    save_high_score(model_.GetHighScore(), 2);
+  }
+}
+
+void QtSnakeController::handleKeyPress(QKeyEvent* event) {
+  qDebug() << "Key pressed:" << event->key()
+           << "Pause state before:" << model_.IsPause();
+  if (model_.IsStartScreen() || model_.IsGameOver()) {
+    if (event->key() == Qt::Key_Enter || event->key() == Qt::Key_Return) {
+      startGame();
+    } else if (event->key() == Qt::Key_Escape) {
+      emit requestReturnToMenu();
+    }
+    return;
+  }
+
+  // Логика во время игры
+  if (event->key() == Qt::Key_Escape) {
+    qDebug() << "Escape processing started";
+    model_.TogglePause();
+    qDebug() << "Pause state after toggle:" << model_.IsPause();
+    if (model_.IsPause()) {
+      view_.draw(get_data_from_model(model_));
+      timer_.stop();
+      qDebug() << "Timer stopped";
+    } else {
+      refresh_timer();
+      qDebug() << "Timer restarted";
+    }
+    return;
+  }
+
+  if (model_.IsPause()) {
+    return;
+  }
+
+  switch (event->key()) {
+    case Qt::Key_Up:
+      if (model_.GetDirection() != DOWN) model_.SetDirection(UP);
+      break;
+    case Qt::Key_Down:
+      if (model_.GetDirection() != UP) model_.SetDirection(DOWN);
+      break;
+    case Qt::Key_Left:
+      if (model_.GetDirection() != RIGHT) model_.SetDirection(LEFT);
+      break;
+    case Qt::Key_Right:
+      if (model_.GetDirection() != LEFT) model_.SetDirection(RIGHT);
+      break;
+    case Qt::Key_Space:
+      model_.SetBoost(true);
+      break;
+    default:
+      model_.SetBoost(false);
+      break;
+  }
+  view_.update();
+}
+
+// Отпускание клавишы
+void QtSnakeController::handleKeyRelease(QKeyEvent* event) {
+  if (event->key() == Qt::Key_Space) {
+    model_.SetBoost(false);
+  }
+}
+
+void QtSnakeController::startGame() {
+  model_.Reset();
+  model_.SetStartScreen(false);
+  refresh_timer();
+}
+
+void QtSnakeController::refresh_timer() {
+  if (timer_.isActive()) {
+    timer_.stop();
+  }
+  timer_.start(model_.GetDelay());
+
+  // qDebug() << "SPEED_DELAY: " << model_.GetDelay();  // дебаг
+}
+
+}  // namespace s21
+
+
+./brick_game/snake/qt_controller/qt_snake_controller.h
+
+#ifndef QT_SNAKE_CONTROLLER_H
+#define QT_SNAKE_CONTROLLER_H
+#include <QKeyEvent>
+#include <QTimer>
+
+#include "../model/snake_model.h"
+#include "qt_snake_view.h"
+extern "C" {
+#include "../../common/high_score/high_score.h"
+}
+namespace s21 {
+
+class QtSnakeController : public QObject {
+  Q_OBJECT
+ public:
+  QtSnakeController(SnakeModel& model, QtSnakeView& view);
+  void UpdateTimer();
+  void refresh_timer();
+  SnakeDrawData get_data_from_model(SnakeModel& model);
+  void handleKeyPress(QKeyEvent* event);
+  void handleKeyRelease(QKeyEvent* event);
+  void startGame();
+
+ signals:
+  void requestStartGame();
+  void requestReturnToMenu();
+  void gameStateChanged();
+
+ private slots:
+  void onTimeout();
+
+ private:
+  SnakeModel& model_;
+  QtSnakeView& view_;
+  QTimer timer_;
+};
+
+}  // namespace s21
+
+#endif  // QT_SNAKE_CONTROLLER_H
+
+
+./brick_game/snake/qt_controller/s21_qt_snake.h
+
+#ifndef QT_S21_SNAKE_H
+#define QT_S21_SNAKE_H
+#include <deque>  //debug
+
+#include "../model/snake_model.h"
+namespace s21 {
+
+class QtSnakeView;
+class QtSnakeController;
+
+}  // namespace s21
+
+#endif  // QT_S21_SNAKE_H
+
+
+./gui/cli/common_gui/welcome_cli/cli_display_welcome_screen.c
+
+#include "../../../../brick_game/tetris/model/s21_tetris_cli.h"
+#ifdef TEST_MODE
+void display_welcome_screen(int high_score, WINDOW* win_game,
+                            WINDOW* win_next_figure, WINDOW* win_score_level,
+                            WINDOW* win_high_score, int brick_game) {
+  (void)high_score;
+  (void)win_game;
+  (void)win_next_figure;
+  (void)win_score_level;
+  (void)win_high_score;
+  (void)brick_game;
+}
+#else
+void display_welcome_screen(int high_score, WINDOW* win_game,
+                            WINDOW* win_next_figure, WINDOW* win_score_level,
+                            WINDOW* win_high_score, int brick_game) {
+  refresh();
+  initialization_of_colors();
+  int max_y, max_x;
+  getmaxyx(win_game, max_y, max_x);
+
+  const char* messages_tetris[] = {
+      " ", "[][][][]", "[]",          "[]",         "[]", " ",
+      " ", " ",        "Press Enter", " to start",  " ",  " ",
+      " ", " ",        " ",           "High Score", " ",  "====="};
+  const char* messages_snake[] = {
+      " ",          "  [][]  ", "[]    []", "  []    ",    "    []  ",
+      "[]    []",   "  [][]  ", " ",        "Press Enter", " to start",
+      " ",          " ",        " ",        " ",           " ",
+      "High Score", " ",        "====="};
+  const char** messages;
+  int number_of_elements_array = 0;
+  switch (brick_game) {
+    case 1:
+      messages = messages_tetris;
+      number_of_elements_array = sizeof(messages_tetris) / sizeof(messages[0]);
+      break;
+    case 2:
+      messages = messages_snake;
+      number_of_elements_array = sizeof(messages_snake) / sizeof(messages[0]);
+      break;
+    default:
+      break;
+  }
+  int start_x_messages[number_of_elements_array];
+  int start_y = (max_y - number_of_elements_array) / 2;
+  int number = high_score;
+  int length_number = 0;
+  if (number == 0)
+    length_number = 1;
+  else
+    length_number = (int)log10(number) + 1;
+  for (int message_index = 0; message_index < number_of_elements_array;
+       message_index++) {
+    start_x_messages[message_index] =
+        (max_x - (int)strlen(messages[message_index])) / 2;
+    if (message_index == number_of_elements_array - 1) {
+      start_x_messages[message_index] =
+          (max_x - (int)strlen(messages[message_index]) * 2 - length_number) /
+          2;
+      wattron(win_game, COLOR_PAIR(11));
+      mvwprintw(win_game, start_y + message_index,
+                start_x_messages[message_index], "%s %d %s",
+                messages[message_index], number, "=====");
+      wattroff(win_game, COLOR_PAIR(11));
+    } else {
+      wattron(win_game, COLOR_PAIR(10));
+      mvwprintw(win_game, start_y + message_index,
+                start_x_messages[message_index], "%s", messages[message_index]);
+      wattroff(win_game, COLOR_PAIR(10));
+    }
+  }
+
+  box(win_next_figure, 0, 0);
+  box(win_game, 0, 0);
+  box(win_score_level, 0, 0);
+  box(win_high_score, 0, 0);
+  wnoutrefresh(win_next_figure);
+  wnoutrefresh(win_game);
+  wnoutrefresh(win_score_level);
+  wnoutrefresh(win_high_score);
+  curs_set(0);
+
+  doupdate();
+}
+#endif
+
+./gui/cli/snake/snake_view.cpp
+
+#include "snake_view.h"
+
+#include <string>
+
+#include "../../../brick_game/snake/model/snake_model.h"
+#ifdef TEST_MODE
+namespace s21 {
+SnakeView::SnakeView(WINDOW* game_win, WINDOW* win_next_figure,
+                     WINDOW* win_score_level, WINDOW* win_high_score) {
+  (void)game_win;
+  (void)win_next_figure;
+  (void)win_score_level;
+  (void)win_high_score;
+}
+void SnakeView::Draw(const SnakeModel& model) { (void)model; }
+void SnakeView::DisplayPause() {}
+void SnakeView::DisplayGameOver(const SnakeModel& model) { (void)model; }
+void SnakeView::DrawGameWindow(const SnakeModel& model) { (void)model; }
+void SnakeView::DrawScoreWindow(const SnakeModel& model) { (void)model; }
+void SnakeView::DrawHighScoreWindow(const SnakeModel& model) { (void)model; }
+void SnakeView::DrawTitleWindow() {}
+}  // namespace s21
+#else
+namespace s21 {
+SnakeView::SnakeView(WINDOW* game_win, WINDOW* win_next_figure,
+                     WINDOW* win_score_level, WINDOW* win_high_score)
+    : win_game_(game_win),
+      win_next_figure_(win_next_figure),
+      win_score_level_(win_score_level),
+      win_high_score_(win_high_score) {}
+
+void SnakeView::Draw(const SnakeModel& model) {
+  if (model.IsPause()) {
+    DisplayPause();
+    return;
+  }
+  DrawGameWindow(model);
+  DrawScoreWindow(model);
+  DrawHighScoreWindow(model);
+  DrawTitleWindow();
+  doupdate();
+}
+
+void SnakeView::DisplayPause() {
+  werase(win_game_);
+  box(win_game_, 0, 0);
+  std::string msg = "PAUSED";
+  mvwprintw(win_game_, HEIGHT / 2, (WIDTH * 2 - msg.size() + 1) / 2, "%s",
+            msg.c_str());
+  wnoutrefresh(win_game_);
+  doupdate();
+}
+
+void SnakeView::DisplayGameOver(const SnakeModel& model) {
+  werase(win_game_);
+  box(win_game_, 0, 0);
+  std::string msg = model.GetScore() >= 200 ? "You Win!" : "Game Over!";
+  mvwprintw(win_game_, HEIGHT / 2, (WIDTH * 2 - msg.size() + 1) / 2, "%s",
+            msg.c_str());
+  wnoutrefresh(win_game_);
+  doupdate();
+}
+
+void SnakeView::DrawGameWindow(const SnakeModel& model) {
+  werase(win_game_);
+  box(win_game_, 0, 0);
+  for (int y = 0; y < HEIGHT; ++y) {
+    for (int x = 0; x < WIDTH; ++x) {
+      int sym = 31;
+      std::pair<int, int> cell = std::make_pair(y, x);
+      if (cell == model.GetFood()) {
+        sym = 33;
+      } else if (std::find(model.GetSnake().begin(), model.GetSnake().end(),
+                           cell) != model.GetSnake().end()) {
+        sym = 32;
+      }
+      wattron(win_game_, COLOR_PAIR(sym));
+      mvwaddch(win_game_, y + 1, x * 2 + 1, ' ');
+      mvwaddch(win_game_, y + 1, x * 2 + 2, ' ');
+      wattroff(win_game_, COLOR_PAIR(sym));
+    }
+  }
+  wnoutrefresh(win_game_);
+}
+
+void SnakeView::DrawScoreWindow(const SnakeModel& model) {
+  werase(win_score_level_);
+  box(win_score_level_, 0, 0);
+  wattron(win_score_level_, COLOR_PAIR(34));
+  mvwprintw(win_score_level_, 1, 1, "Score: %d", model.GetScore());
+  mvwprintw(win_score_level_, 2, 1, "Level: %d", model.GetLevel());
+  wattroff(win_score_level_, COLOR_PAIR(34));
+  wnoutrefresh(win_score_level_);
+}
+
+void SnakeView::DrawHighScoreWindow(const SnakeModel& model) {
+  werase(win_high_score_);
+  box(win_high_score_, 0, 0);
+  wattron(win_high_score_, COLOR_PAIR(35));
+  mvwprintw(win_high_score_, 1, 1, "High Score: %d", model.GetHighScore());
+  wattroff(win_high_score_, COLOR_PAIR(35));
+  wnoutrefresh(win_high_score_);
+}
+
+void SnakeView::DrawTitleWindow() {
+  werase(win_next_figure_);
+  box(win_next_figure_, 0, 0);
+  std::string title = "Snake Game";
+  int title_length = title.length();
+  int win_width = getmaxx(win_next_figure_);
+  int centered_x = (win_width - title_length) / 2;
+  mvwprintw(win_next_figure_, 2, centered_x, "%s", title.c_str());
+  wnoutrefresh(win_next_figure_);
+}
+
+}  // namespace s21
+#endif  // TEST_MODE
+
+
+./gui/cli/snake/snake_view.h
+
+#ifndef S21_SNAKE_VIEW_H
+#define S21_SNAKE_VIEW_H
+extern "C" {
+#include "../../../brick_game/tetris/model/s21_tetris_cli.h"
+}
+#include <ncurses.h>
+
+#include "../../../brick_game/snake/cli_controller/s21_cli_snake.h"
+
+namespace s21 {
+
+class SnakeViewTest;
+class SnakeView {
+  friend class SnakeViewTest;
+
+ public:
+  SnakeView(WINDOW* game_win, WINDOW* win_next_figure, WINDOW* win_score_level,
+            WINDOW* win_high_score);
+  void Draw(const SnakeModel& model);
+  void DisplayGameOver(const SnakeModel& model);
+  void DisplayPause();
+
+#ifdef TEST_MODE
+  void Test_DrawGameWindow(const SnakeModel& model) { DrawGameWindow(model); }
+  void Test_DrawScoreWindow(const SnakeModel& model) { DrawScoreWindow(model); }
+  void Test_DrawHighScoreWindow(const SnakeModel& model) {
+    DrawHighScoreWindow(model);
+  }
+  void Test_DrawTitleWindow() { DrawTitleWindow(); }
+#endif
+
+ private:
+  WINDOW* win_game_;
+  WINDOW* win_next_figure_;
+  WINDOW* win_score_level_;
+  WINDOW* win_high_score_;
+
+  void DrawGameWindow(const SnakeModel& model);
+  void DrawScoreWindow(const SnakeModel& model);
+  void DrawHighScoreWindow(const SnakeModel& model);
+  void DrawTitleWindow();
+};
+
+}  // namespace s21
+
+#endif  // S21_SNAKE_VIEW_H
+
+
+./gui/desktop/launcher/launcher.pro
+
+QT += core gui widgets
+
+TARGET = GameLauncher
+TEMPLATE = app
+
+# --- Подключение заголовков ---
+INCLUDEPATH += \
+    ../tetris \
+    ../snake \
+    ../../../brick_game \
+    ../../../brick_game/common/high_score \
+    ../../../brick_game/tetris/model \
+    ../../../brick_game/snake/model \
+    ../../../brick_game/tetris/qt_controller \
+    ../../../brick_game/snake/qt_controller \
+    .
+
+# --- Источники игр snake ---
+
+SOURCES += \
+    ../snake/main_window_snake.cpp \
+        ../snake/qt_snake_view.cpp \
+
+HEADERS += \
+        ../snake/main_window_snake.h \
+        ../snake/qt_snake_view.h
+
+# Источники из библиотеки model common
+SOURCES += \
+        ../../../brick_game/snake/qt_controller/qt_snake_controller.cpp \
+        ../../../brick_game/snake/model/snake_model.cpp
+
+HEADERS += \
+        ../../../brick_game/snake/qt_controller/qt_snake_controller.h \
+        ../../../brick_game/snake/model/snake_model.h
+
+RESOURCES += ../snake/resource.qrc
+
+
+# --- Источники игр tetris ---
+
+# Источники GUI
+SOURCES += \
+        ../tetris/main_window_tetris.cpp \
+        ../tetris/qt_tetris_view.cpp
+
+
+HEADERS += \
+        ../tetris/main_window_tetris.h \
+        ../tetris/qt_tetris_view.h
+
+# Источники из модели и контроллера
+SOURCES += \
+        ../../../brick_game/tetris/qt_model/qt_tetris_model.cpp \
+        ../../../brick_game/tetris/qt_controller/qt_tetris_controller.cpp \
+        ../../../brick_game/tetris/model/calculate.c \
+        ../../../brick_game/tetris/model/collision.c \
+        ../../../brick_game/tetris/model/creating_memory_game_objects.c \
+        ../../../brick_game/tetris/model/drop_new_figure.c \
+        ../../../brick_game/tetris/model/templates.c \
+        ../../../brick_game/tetris/model/free_memory/free_figure_bag.c \
+        ../../../brick_game/tetris/model/free_memory/free_memory_game.c \
+        ../../../brick_game/tetris/model/free_memory/free_tetris_field.c \
+        ../../../brick_game/tetris/model/free_memory/free_tetris_figure.c\
+        ../../../brick_game/tetris/model/free_memory/free_tetris_figures_template.c\
+        ../../../brick_game/tetris/model/move_figure.c\
+        ../../../brick_game/tetris/model/speed_from_level.c \
+        ../../../brick_game/tetris/model/processing_figures_after_falling.c \
+        ../../../brick_game/tetris/model/print_high_score.c\
+        ../../../brick_game/tetris/model/reset_game.c
+
+HEADERS += \
+        ../../../brick_game/tetris/qt_model/qt_tetris_model.h \
+        ../../../brick_game/tetris/qt_controller/qt_tetris_controller.h \
+        ../../../brick_game/tetris/model/s21_tetris_game_core.h
+
+# Ресурсы (изображения)
+RESOURCES += ../tetris/resource_tetris.qrc
+
+
+# --- Общие утилиты ---
+SOURCES += \
+    main.cpp \
+    qt_choose_game_view.cpp \
+    ../../../brick_game/common/high_score/load_high_score.c \
+    ../../../brick_game/common/high_score/save_high_score.c
+
+HEADERS += \
+    ../../../brick_game/common/high_score/high_score.h \
+    qt_choose_game_view.h
+
+
+# --- SDK warning ---
+CONFIG += sdk_no_version_check
+
+
+./gui/desktop/launcher/main.cpp
+
+#include <QApplication>
+
+#include "qt_choose_game_view.h"
+
+// Подключаем главные окна игр
+#include "../snake/main_window_snake.h"
+#include "../tetris/main_window_tetris.h"
+
+int main(int argc, char* argv[]) {
+  QApplication app(argc, argv);
+
+  QtChooseGameView chooseView;
+  chooseView.resize(400, 300);  // Размер меню выбора
+
+  QObject::connect(
+      &chooseView, &QtChooseGameView::gameSelected, [&](int gameIndex) {
+        chooseView.hide();
+
+        if (gameIndex == 0) {  // Тетрис
+          s21::MainWindowTetris* window = new s21::MainWindowTetris();
+          window->show();
+          // Подключаем сигнал для возврата к меню
+          QObject::connect(window, &s21::MainWindowTetris::restartSelection,
+                           [window, &chooseView]() {
+                             chooseView.show();
+                             window->setAttribute(Qt::WA_DeleteOnClose);
+                             window->close();
+                           });
+
+        } else if (gameIndex == 1) {  // Змейка
+          s21::MainWindowSnake* window = new s21::MainWindowSnake();
+          window->show();
+          // Подключаем сигнал для возврата к меню
+          QObject::connect(window, &s21::MainWindowSnake::restartSelection,
+                           [window, &chooseView]() {
+                             chooseView.show();
+                             window->setAttribute(Qt::WA_DeleteOnClose);
+                             window->close();
+                           });
+        }
+      });
+
+  chooseView.show();
+  return app.exec();
+}
+
+
+./gui/desktop/launcher/qt_choose_game_view.cpp
+
+#include "qt_choose_game_view.h"
+
+QtChooseGameView::QtChooseGameView(QWidget* parent) : QWidget(parent) {
+  setWindowTitle("Выбор игры");
+  resize(400, 300);
+
+  QVBoxLayout* layout = new QVBoxLayout(this);
+
+  QLabel* label = new QLabel("Выберите игру:", this);
+  label->setAlignment(Qt::AlignCenter);
+  layout->addWidget(label);
+
+  QPushButton* tetrisButton = new QPushButton("Тетрис", this);
+  QPushButton* snakeButton = new QPushButton("Змейка", this);
+
+  layout->addWidget(tetrisButton);
+  layout->addWidget(snakeButton);
+
+  connect(tetrisButton, &QPushButton::clicked, [this]() {
+    emit gameSelected(0);  // Тетрис
+  });
+
+  connect(snakeButton, &QPushButton::clicked, [this]() {
+    emit gameSelected(1);  // Змейка
+  });
+}
+
+
+./gui/desktop/launcher/qt_choose_game_view.h
+
+#ifndef QT_CHOOSE_GAME_VIEW_H
+#define QT_CHOOSE_GAME_VIEW_H
+
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <QWidget>
+
+class QtChooseGameView : public QWidget {
+  Q_OBJECT
+
+ public:
+  explicit QtChooseGameView(QWidget *parent = nullptr);
+
+ signals:
+  void gameSelected(int gameIndex);  // 0 - Tetris, 1 - Snake
+};
+
+#endif  // QT_CHOOSE_GAME_VIEW_H
+
+
+./gui/desktop/snake/main_window_snake.cpp
+
+#include "main_window_snake.h"
+
+namespace s21 {
+
+MainWindowSnake::MainWindowSnake(QWidget* parent)
+    : QMainWindow(parent), view_(this), controller_(model_, view_) {
+  connect(&controller_, &QtSnakeController::requestReturnToMenu, this,
+          &MainWindowSnake::restartSelection);
+
+  setCentralWidget(&view_);
+  resize(400, 900);
+  setWindowTitle("Snake Game");
+  show();
+}
+
+}  // namespace s21
+
+
+./gui/desktop/snake/main_window_snake.h
+
+#ifndef MAIN_WINDOW_SNAKE_H
+#define MAIN_WINDOW_SNAKE_H
+
+#include <QMainWindow>
+
+#include "../../../brick_game/snake/model/snake_model.h"
+#include "../../../brick_game/snake/qt_controller/qt_snake_controller.h"
+#include "qt_snake_view.h"
+
+namespace s21 {
+
+class MainWindowSnake : public QMainWindow {
+  Q_OBJECT
+
+ public:
+  explicit MainWindowSnake(QWidget* parent = nullptr);
+
+ signals:
+  void restartSelection();
+
+ private:
+  SnakeModel model_;
+  QtSnakeView view_;
+  QtSnakeController controller_;
+};
+
+}  // namespace s21
+
+#endif  // MAIN_WINDOW_SNAKE_H
+
+
+./gui/desktop/snake/qt_snake_view.cpp
+
+#include "qt_snake_view.h"
+
+namespace s21 {
+
+QtSnakeView::QtSnakeView(QWidget* parent) : QWidget(parent) {
+  setFocusPolicy(Qt::StrongFocus);
+  setFocus();
+}
+
+void QtSnakeView::draw(const SnakeDrawData& data) {
+  draw_data_ = data;
+  update();
+}
+
+void QtSnakeView::paintEvent(QPaintEvent* event) {
+  Q_UNUSED(event);
+  QPainter painter(this);
+  painter.fillRect(rect(), QColor("#FFFACD"));
+
+  if (draw_data_.start_screen) {
+    draw_welcome_screen(painter);
+    return;
+  }
+
+  // Рисуем игровое поле
+  painter.fillRect(0, 0, 400, 800, QColor("#E6F7FF"));  // нежно-голубой
+  drawSnake(painter);
+  drawApple(painter);
+  drawScoreLevelPause(painter);
+
+  if (draw_data_.game_over) {
+    drawGameOverWin(painter);
+  }
+
+}  // paintEvent
+
+void QtSnakeView::draw_welcome_screen(QPainter& painter) {
+  painter.fillRect(rect(), QColor("skyblue"));
+  // Солнце
+  painter.setBrush(Qt::yellow);
+  painter.drawEllipse(350, 20, 30, 30);
+  for (int i = 0; i < 12; ++i) {
+    painter.save();
+    painter.translate(365, 35);
+    painter.rotate(i * 30);
+    painter.drawLine(0, -20, 0, -35);
+    painter.restore();
+  }
+
+  // Текст "ЗМЕЙКА"
+  painter.setPen(QColor("#FF1493"));
+  painter.setFont(QFont("Comic Sans MS", 48, QFont::Bold));
+  QRect titleRect(0, 200, width(), 100);
+  painter.drawText(titleRect, Qt::AlignCenter, "ЗМЕЙКА");
+
+  // Подпись
+  painter.setPen(QColor("#228B22"));
+  painter.setFont(QFont("Comic Sans MS", 18));
+  QRect subtitleRect(0, 800, width(), 50);
+  painter.drawText(subtitleRect, Qt::AlignCenter, "Нажмите Enter для старта");
+
+  // Змейка (картинка)
+  QImage snake(":/resourses_files/images/snake.png");
+  if (!snake.isNull()) {
+    int imgWidth = 250;
+    int imgHeight = 250;
+    QImage scaledSnake = snake.scaled(imgWidth, imgHeight, Qt::KeepAspectRatio,
+                                      Qt::SmoothTransformation);
+    int imageX = (rect().width() - imgWidth) / 2;
+    painter.drawImage(imageX, 380, scaledSnake);
+  } else {
+    qDebug() << "[ERROR] Welcome image not found!";
+    // Буква S (жирная)
+    QPen sPen;
+    sPen.setColor(QColor("#32CD32"));  // Лаймово-зелёный
+    sPen.setWidth(15);  // Толщина линии — делаем жирнее!
+    sPen.setCapStyle(Qt::RoundCap);  // Скругление концов — красивее
+    sPen.setJoinStyle(Qt::RoundJoin);  // Скругление углов соединений
+    painter.setPen(sPen);
+    painter.setBrush(Qt::NoBrush);
+
+    QRect s_rect(140, 400, 120, 60);  // x, y, ширина, высота
+    painter.drawArc(s_rect, 90 * 16, 180 * 16);  // верхняя половина
+    painter.drawArc(s_rect.adjusted(0, 60, 0, 60), 90 * 16,
+                    -180 * 16);  // нижняя половина
+  }
+}
+
+void QtSnakeView::drawSnake(QPainter& painter) {
+  int segmentIndex = 0;
+  int totalSegments = draw_data_.snake.size();
+
+  for (const auto& dot : draw_data_.snake) {
+    // Вычисляем интенсивность зелёного цвета в зависимости от позиции
+    // от 50 до 250
+    int greenValue = 50 + (200 * segmentIndex) / totalSegments;
+    // RGB: только зелёный канал меняется
+    painter.setBrush(QColor(0, greenValue, 0));
+    // Рисуем блок
+    painter.drawRect(dot.second * 40, dot.first * 40, 40, 40);
+    segmentIndex++;
+  }
+}
+
+void QtSnakeView::drawApple(QPainter& painter) {
+  const auto& food = draw_data_.food;
+  QImage apple(":/resourses_files/images/apple.jpg");
+
+  if (!apple.isNull()) {
+    // Масштабируем изображение под размер блока (40x40)
+    QImage scaledApple =
+        apple.scaled(40, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+    // Рисуем яблоко на координатах еды
+    painter.drawImage(food.second * 40, food.first * 40, scaledApple);
+  } else {
+    qDebug() << "Ошибка: Изображение не загружено из .qrc!";
+    painter.setBrush(QColor("#FFD700"));  // Золотистый цвет
+    painter.drawEllipse(food.second * 40 + 5, food.first * 40 + 5, 30, 30);
+
+    // Глазки
+    painter.setBrush(Qt::white);
+    painter.drawEllipse(food.second * 40 + 12, food.first * 40 + 12, 5, 5);
+    painter.drawEllipse(food.second * 40 + 23, food.first * 40 + 12, 5, 5);
+  }
+}
+
+void QtSnakeView::drawScoreLevelPause(QPainter& painter) {
+  // Рисуем уровень
+  painter.setFont(QFont("Comic Sans MS", 24, QFont::Bold));
+  painter.setPen(QColor("#4B0082"));  // Темно-фиолетовый
+  painter.drawText(30, 840, QString("Уровень: %1").arg(draw_data_.level));
+
+  // Рисуем счёт
+  painter.setFont(QFont("Comic Sans MS", 24, QFont::Bold));
+  painter.setPen(QColor("#FF69B4"));  // розовый
+  painter.drawText(30, 880, QString("Очки: %1").arg(draw_data_.score));
+
+  // Рисуем рекорд
+  painter.setFont(QFont("Comic Sans MS", 24, QFont::Bold));
+  painter.setPen(QColor("#00CED1"));  //  тёмно-циан
+  painter.drawText(230, 840, QString("Рекорд: %1").arg(draw_data_.high_score));
+
+  // Рисуем паузу
+  if (draw_data_.paused) {
+    painter.fillRect(rect(), QColor(0, 0, 0, 180));  // затемнение
+    painter.setPen(Qt::red);
+    painter.setFont(QFont("Comic Sans MS", 34, QFont::Bold));
+    painter.drawText(rect(), Qt::AlignCenter, "ПАУЗА");
+    //    qDebug() << "зашли в метод отрисовки паузы";
+  }
+}
+
+void QtSnakeView::drawGameOverWin(QPainter& painter) {
+  painter.fillRect(rect(), QColor(0, 0, 0, 180));  // затемнение
+  painter.setPen(Qt::red);
+  painter.setFont(QFont("Comic Sans MS", 24, QFont::Bold));
+
+  if (draw_data_.win) {
+    painter.drawText(rect(), Qt::AlignCenter,
+                     "🎉 ПОБЕДА 🎉\n\nПоздравляем!\nВы собрали 200 очков!");
+  } else {
+    painter.drawText(rect(), Qt::AlignCenter, "ИГРА ОКОНЧЕНА");
+    // Подпись
+    painter.setPen(QColor("#FF1493"));
+    painter.setFont(QFont("Comic Sans MS", 18));
+    QRect subtitleRect(0, 700, width(), 50);
+    painter.drawText(subtitleRect, Qt::AlignCenter,
+                     "Enter - Попробовать ещё раз.\nEscape - Выход.");
+  }
+
+  painter.setPen(Qt::white);
+  painter.setFont(QFont("Arial", 16));
+  QString scoreText = QString("Score: %1").arg(draw_data_.score);
+  painter.drawText(rect(), Qt::AlignBottom | Qt::AlignHCenter, scoreText);
+
+  painter.setFont(QFont("Arial", 12));
+  QString highScoreText = QString("High Score: %1").arg(draw_data_.high_score);
+  painter.drawText(rect(), Qt::AlignBottom | Qt::AlignLeft, highScoreText);
+
+  QString restartText = "Press any key to restart";
+  painter.drawText(rect(), Qt::AlignBottom | Qt::AlignRight, restartText);
+}
+
+void QtSnakeView::keyPressEvent(QKeyEvent* event) { emit keyPressed(event); }
+
+void QtSnakeView::keyReleaseEvent(QKeyEvent* event) { emit keyReleased(event); }
+}  // namespace s21
+
+
+./gui/desktop/snake/qt_snake_view.h
+
+#ifndef QT_SNAKE_VIEW_H
+#define QT_SNAKE_VIEW_H
+
+#include <QKeyEvent>
+#include <QPainter>
+#include <QWidget>
+#include <deque>
+#include <utility>
+
+#include "../../../brick_game/snake/model/snake_model.h"
+namespace s21 {
+
+struct SnakeDrawData {
+  std::deque<std::pair<int, int>> snake;
+  std::pair<int, int> food;
+  int score = 0;
+  bool paused = false;
+  bool game_over = false;
+  bool win = false;
+  bool start_screen = true;
+  int high_score = 0;
+  int level = 1;
+};
+
+class QtSnakeView : public QWidget {
+  Q_OBJECT
+ public:
+  explicit QtSnakeView(QWidget* parent = nullptr);
+  void draw(const SnakeDrawData& data);  // Принимаем структуру для отрисовки
+
+ signals:
+  void keyPressed(QKeyEvent* event);
+  void keyReleased(QKeyEvent* event);
+
+ protected:
+  void paintEvent(QPaintEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
+  void keyReleaseEvent(QKeyEvent* event) override;
+
+ private:
+  SnakeDrawData draw_data_;  // Храним данные для отрисовки
+  void draw_welcome_screen(QPainter& painter);
+  void drawSnake(QPainter& painter);
+  void drawApple(QPainter& painter);
+  void drawScoreLevelPause(QPainter& painter);
+  void drawGameOverWin(QPainter& painter);
+};
+
+}  // namespace s21
+
+#endif  // QT_SNAKE_VIEW_H
+
+
+./gui/desktop/snake/snake_gui.pro
+
+# snake_gui.pro
+
+QT += core gui widgets
+
+TARGET = SnakeGame
+TEMPLATE = app
+
+# Указываем стандарт C++20
+QMAKE_CXXFLAGS += -std=c++20
+
+# Отключаем устаревшие предупреждения Qt
+DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000
+
+# Источники
+SOURCES += \
+        qt_snake_view.cpp \
+        main_window.cpp \
+        main.cpp \
+
+
+HEADERS += \
+        qt_snake_view.h \
+        main_window.h
+
+
+# Источники из библиотеки model common
+SOURCES += \
+        ../../../brick_game/snake/qt_controller/qt_snake_controller.cpp \
+        ../../../brick_game/snake/model/snake_model.cpp \
+        ../../../brick_game/common/high_score/load_high_score.c \
+        ../../../brick_game/common/high_score/save_high_score.c
+HEADERS += \
+        ../../../brick_game/snake/qt_controller/qt_snake_controller.h \
+        ../../../brick_game/snake/model/snake_model.h \
+        ../../../brick_game/common/high_score/high_score.h
+
+RESOURCES += resource.qrc
+
+
+./Makefile
+
+.PHONY: all install uninstall dvi dist test gcov_report check rebuild clean
+
+# Целевой исполняемый файл
+TARGET = s21_brick_games_terminal_sueannel
+
+# Компиляторы
+CC = gcc -g -Wall -Wextra -Werror 
+CXX = g++  -g -Wall -Wextra -Werror -std=c++20
+
+# Флаги компиляции
+GCOVFLAGS = -fprofile-arcs -ftest-coverage -lncurses
+TEST_FLAGS = -D TEST_MODE
+
+# Операционная система
+OS=$(shell uname -s)
+Gtest=-lgtest -lgtest_main -pthread
+LIBS=$(Gtest)
+LINUX=$(Gtest) -lm -lpthread -lrt -lsubunit
+ifeq ($(OS), Linux)
+ CC += -D OS_LINUX
+ CXX += -D OS_LINUX
+endif
+ifeq ($(OS), Darwin)
+ CC += -D OS_MAC
+ CXX += -D OS_MAC
+endif
+
+# Поддиректории и заголовочные файлы
+SUBDIRS = brick_game/snake/cli_controller \
+			brick_game/snake/model \
+			gui/cli \
+			brick_game/common \
+			brick_game/tetris/model \
+			brick_game/tetris/controller
+
+
+# Список исходных файлов
+SOURCES = $(shell find $(SUBDIRS) -type f \( -name '*.c' -o -name '*.cpp' \))
+
+# Разделение на C и C++ файлы
+C_SOURCES := $(filter %.c,$(SOURCES))
+CPP_SOURCES := $(filter %.cpp,$(SOURCES))
+
+# Объектные файлы
+C_OBJS := $(patsubst %.c, %.o, $(C_SOURCES))
+CPP_OBJS := $(patsubst %.cpp, %.o, $(CPP_SOURCES))
+OBJ_LIBRARY := $(C_OBJS) $(CPP_OBJS)
+
+# Статическая библиотека
+STATIC_LIB = s21_terminal_lib_game.a
+
+# Тестовые файлы
+STUBS = tests/curs_set_stub.c
+TEST_SOURCE=$(shell find tests -type f -name '*.c' -o -name '*.cpp' )
+TEST = $(filter-out tests/curs_set_stub.c, $(TEST_SOURCE))
+
+# Цели
+all: clean $(STATIC_LIB) $(TARGET)
+
+# Создание статической библиотеки
+$(STATIC_LIB): $(OBJ_LIBRARY)
+	ar rcs $(STATIC_LIB) $(OBJ_LIBRARY)
+	ranlib $(STATIC_LIB)
+# find . -type f \( -name "*.o" \) -exec rm -f {} \;
+
+# Компиляция C файлов
+%.o: %.c
+	$(CC) -c $< -o $@
+
+# Компиляция C++ файлов
+%.o: %.cpp
+	$(CXX) -c $< -o $@
+
+# Создание исполняемого файла
+$(TARGET): brick_game/main_menu.o $(STATIC_LIB)
+	$(CXX) brick_game/main_menu.o -o $(TARGET) $(STATIC_LIB) -lncurses
+	
+# Тестирование
+test: COMPILE_FLAGS := $(CXX) $(TEST_FLAGS)
+test: $(STATIC_LIB)
+ifeq ($(OS), Darwin)
+	$(COMPILE_FLAGS) $(TEST) $(STUBS) -o test.out $(STATIC_LIB) $(LIBS) -lncurses
+else
+	$(COMPILE_FLAGS) $(TEST) $(STUBS) -o test.out $(STATIC_LIB) $(LINUX) -lncurses
+endif
+	./test.out
+
+# Отчет о покрытии кода
+gcov_report: $(STATIC_LIB) $(TEST)
+	mkdir -p gcov_report
+ifeq ($(OS), Darwin)	
+	gcc $(TEST_FLAGS) $(GCOVFLAGS) $(TEST) $(STUBS) $(SOURCES) -lstdc++ -o gcov_report/report.out $(LIBS)
+else
+	gcc $(TEST_FLAGS) $(GCOVFLAGS) $(TEST) $(STUBS) $(SOURCES) -lstdc++ -o gcov_report/report.out $(LINUX)
+endif
+	./gcov_report/report.out	
+
+	lcov -t "Отчет о покрытии gcov для тестов" -o gcov_report/Coverage_Report.info -c -d . \
+	--ignore-errors unused \
+	--ignore-errors gcov \
+	--ignore-errors mismatch --ignore-errors inconsistent \
+	--exclude '*/src/tests/*' \
+	--exclude '*/src/List/constructors_and_destructor.cpp' \
+    --exclude '*/usr/local/include/c++/*' \
+    --exclude '*/usr/local/include/gtest/*'
+
+	genhtml -o gcov_report/report/ gcov_report/Coverage_Report.info
+	rm -f *.gcno *.gcda *.info gcov_report/report.out *.gcov
+
+ifeq ($(OS), Darwin)
+	open gcov_report/report/index-sort-f.html
+else
+	xdg-open gcov_report/report/index-sort-f.html
+endif
+
+show: test
+	echo "$(TEST)"
+	#valgrind --trace-children=yes --track-origins=yes --track-fds=yes --tool=memcheck --leak-check=full --show-leak-kinds=all --log-file="./report.log" ./test.out
+	# cppcheck --enable=all --suppress=missingIncludeSystem $(SOURCES)
+	#CK_FORK=no valgrind -s  --trace-children=yes --track-origins=yes --track-fds=yes --tool=memcheck --leak-check=full --show-leak-kinds=all --log-file=RESULT_VALGRIND.txt $(SOURCES)
+	valgrind --leak-check=yes --log-file="./report.log" ./test.out  && sync #утечки каждого теста
+	#valgrind --leak-check=full --log-file="./report.log" --quiet ./test.out # минимум только ошибки и утечки
+
+# Цель для сборки Qt версии проекта
+qt: 
+	@echo "===== Building Qt version of the project ====="
+	@cd gui/desktop/launcher && qmake -o Makefile launcher.pro
+	@cd gui/desktop/launcher && $(MAKE)
+	@echo "===== Cleaning up Qt build artifacts except executable ====="
+	@cd gui/desktop/launcher && rm -f *.o moc_*.cpp ui_*.h qrc_*.cpp moc_predefs.h
+	@cd gui/desktop/launcher && rm -f Makefile
+
+# Ручная очи	стка Qt-сборки
+qt_clean:
+	@echo "===== Cleaning Qt build files manually ====="
+	@cd gui/desktop/launcher && rm -f *.o moc_*.cpp ui_*.h qrc_*.cpp moc_predefs.h Makefile
+	@rm -rf gui/desktop/launcher/GameLauncher.app
+	@rm -rf gui/desktop/launcher/GameLauncher
+	@rm -rf gcov_report
+	@echo "===== Cleaning Qt done ====="
+
+# Установка исполняемых файлов (терминал + Qt .app)
+define print_progress
+    @printf "Прогресс: [%-20s] %d%%\r" "$(shell printf '=%.0s' {1..$(1)}))" "$(shell echo "$(1)*5" | bc)"
+    @sleep 0.1
+endef
+
+install: uninstall
+	@echo "🚀 Начало установки..."
+	@echo "1/4 🔧 Сборка терминальной версии..."
+	@$(MAKE) -s $(TARGET)
+	@echo "2/4 🎨 Сборка Qt версии..."
+	@$(MAKE) -s qt
+	@echo "3/4 📂 Создание папки bin в домашнем каталоге..."
+	@install -d $(HOME)/bin
+	@echo "4/4 📦 Копирование файлов..."
+	@install -m 755 $(TARGET) $(HOME)/bin
+	# Попытка скопировать GameLauncher.app, если он существует (macOS)
+	@cp -R gui/desktop/launcher/GameLauncher.app $(HOME)/bin || true
+	@cp -R gui/desktop/launcher/GameLauncher $(HOME)/bin || true
+	@echo "✅ Установка успешно завершена!"
+	@echo "Исполняемые файлы находятся в: $(HOME)/bin"
+
+# Удаление установленного файла
+uninstall: clean qt_clean
+	rm -f $(HOME)/bin/$(TARGET)
+	rm -rf $(HOME)/bin/GameLauncher.app
+
+# Генерация документации
+dvi: clean
+	$(HOME)/goinfre/homebrew/bin/doxygen Doxyfile
+	open docs/html/index.html
+
+# Создание архива с исходными файлами
+dist: clean
+	tar -czf s21_tetris_snake.tar.gz \
+	$(shell find . -type f \( \
+	-name "*.qrc" -o \
+	-name "*.user" -o \
+	-name "*.pro" -o \
+	-name "*.png" -o \
+	-name "*.jpg" -o \
+	-name "*.jpeg" -o \
+	-name "*.c" -o \
+	-name "*.cpp" -o \
+	-name "*.h" -o \
+	-name "Makefile" -o \
+	-name "Doxyfile" -o \
+	-name "custom.css" \)) \
+	$(shell find gui/cli/documentation -type f)
+
+# Проверка форматирования кода
+check:
+	find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} \;
+
+# Пересборка
+rebuild: clean all
+
+# Очистка
+clean:
+	@find . -type f \( -name "*.o" -o -name "*.a" -o -name "*.gcno" -o -name "*.gcda" -o -name "*.info" -o -name "*.out" -o -name "*.gcov" -o -name "*.log" \) -exec rm -f {} \;
+	@rm -rf ./report
+	@rm -rf *.dSYM
+	@rm -rf ./docs
+	@rm -rf ./s21_tetris_snake.tar.gz
+	@rm -rf ./$(TARGET).a
+	@rm -rf ./$(TARGET)
+	@rm -rf gcov_report
+	@echo "*****_clean is done!_*****"
+
+print_sources:
+	@echo "Found source files:"
+	@echo "$(SOURCES)"
+
+
+
+==========================
+Итоговое дерево:
+./brick_game/common/common.c
+./brick_game/common/high_score/high_score.h
+./brick_game/common/high_score/load_high_score.c
+./brick_game/common/high_score/save_high_score.c
+./brick_game/snake/cli_controller/s21_cli_snake.h
+./brick_game/snake/cli_controller/snake_controller.cpp
+./brick_game/snake/cli_controller/snake_controller.h
+./brick_game/snake/cli_controller/snake_main.cpp
+./brick_game/snake/model/snake_model.cpp
+./brick_game/snake/model/snake_model.h
+./brick_game/snake/qt_controller/qt_snake_controller.cpp
+./brick_game/snake/qt_controller/qt_snake_controller.h
+./brick_game/snake/qt_controller/s21_qt_snake.h
+./gui/cli/common_gui/welcome_cli/cli_display_welcome_screen.c
+./gui/cli/snake/snake_view.cpp
+./gui/cli/snake/snake_view.h
+./gui/desktop/launcher/launcher.pro
+./gui/desktop/launcher/main.cpp
+./gui/desktop/launcher/qt_choose_game_view.cpp
+./gui/desktop/launcher/qt_choose_game_view.h
+./gui/desktop/snake/main_window_snake.cpp
+./gui/desktop/snake/main_window_snake.h
+./gui/desktop/snake/qt_snake_view.cpp
+./gui/desktop/snake/qt_snake_view.h
+./gui/desktop/snake/snake_gui.pro
+./Makefile
